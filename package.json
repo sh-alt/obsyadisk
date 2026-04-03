@@ -1,0 +1,37 @@
+{
+	"name": "obsyadisk",
+	"version": "1.0.0",
+	"description": "Obsidian plugin for Yandex.Disk sync with git-based versioning",
+	"main": "main.js",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+	},
+	"keywords": [
+		"obsidian",
+		"yandex-disk",
+		"sync",
+		"git"
+	],
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^20.11.0",
+		"@types/spark-md5": "^3.0.5",
+		"builtin-modules": "^3.3.0",
+		"esbuild": "^0.19.0",
+		"obsidian": "latest",
+		"tslib": "2.6.2",
+		"typescript": "5.3.3"
+	},
+	"dependencies": {
+		"buffer": "^6.0.3",
+		"diff": "^5.1.0",
+		"isomorphic-git": "^1.25.3",
+		"pako": "^2.1.0",
+		"process": "^0.11.10",
+		"readable-stream": "^4.5.2",
+		"sha.js": "^2.4.11",
+		"spark-md5": "^3.0.2",
+		"stream-browserify": "^3.0.0"
+	}
+}

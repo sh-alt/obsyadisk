@@ -1,0 +1,141 @@
+/* ObsYaDisk Plugin Styles */
+
+/* Conflict Modal */
+.obsyadisk-conflict-modal {
+	max-width: 700px;
+}
+
+.obsyadisk-conflict-description {
+	color: var(--text-muted);
+	margin-bottom: 16px;
+}
+
+.obsyadisk-conflict-list {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	margin-bottom: 20px;
+}
+
+.obsyadisk-conflict-item {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+}
+
+.obsyadisk-conflict-item.obsyadisk-resolved {
+	opacity: 0.5;
+	pointer-events: none;
+}
+
+.obsyadisk-conflict-info strong {
+	font-size: 14px;
+}
+
+.obsyadisk-conflict-times {
+	font-size: 12px;
+	color: var(--text-muted);
+	margin-top: 4px;
+}
+
+.obsyadisk-conflict-buttons {
+	display: flex;
+	gap: 8px;
+	margin-top: 4px;
+}
+
+.obsyadisk-resolved-label {
+	color: var(--text-success);
+	font-size: 12px;
+	margin-left: 8px;
+}
+
+.obsyadisk-conflict-bulk {
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 16px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: center;
+}
+
+.obsyadisk-conflict-bulk h3 {
+	width: 100%;
+	margin: 0 0 8px 0;
+}
+
+/* Version History Modal */
+.obsyadisk-version-modal {
+	max-width: 600px;
+}
+
+.obsyadisk-version-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.obsyadisk-version-item {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 10px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+}
+
+.obsyadisk-version-info {
+	flex: 1;
+}
+
+.obsyadisk-version-meta {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin-top: 2px;
+}
+
+.obsyadisk-restored-label {
+	color: var(--text-success);
+	font-size: 12px;
+}
+
+.obsyadisk-error-label {
+	color: var(--text-error);
+	font-size: 12px;
+}
+
+/* Auth Status */
+.obsyadisk-auth-status {
+	padding: 8px 12px;
+	margin-bottom: 12px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+	font-weight: 600;
+}
+
+.obsyadisk-auth-ok {
+	color: var(--text-success);
+}
+
+.obsyadisk-auth-none {
+	color: var(--text-error);
+}
+
+/* Manual auth collapsible */
+.obsyadisk-manual-auth {
+	margin-top: 8px;
+	padding: 8px 0;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.obsyadisk-manual-auth summary {
+	cursor: pointer;
+	color: var(--text-muted);
+	font-size: 13px;
+	margin-bottom: 8px;
+}

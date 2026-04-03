@@ -1,0 +1,9 @@
+{
+	"id": "obsyadisk",
+	"name": "ObsYaDisk",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Sync your Obsidian vault with Yandex.Disk. Supports per-vault folder mapping, git-based versioning, and conflict resolution.",
+	"author": "sh-alt",
+	"isDesktopOnly": false
+}
