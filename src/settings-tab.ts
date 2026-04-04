@@ -61,12 +61,12 @@ export class ObsYaDiskSettingTab extends PluginSettingTab {
 			);
 		}
 
-		// Manual token input — collapsible fallback
-		const manualEl = containerEl.createEl("details", { cls: "obsyadisk-manual-auth" });
-		manualEl.createEl("summary", { text: "Ручной ввод токена (если OAuth не работает)" });
+		// Advanced / custom credentials — collapsible
+		const advancedEl = containerEl.createEl("details", { cls: "obsyadisk-advanced" });
+		advancedEl.createEl("summary", { text: "Расширенные настройки (свой OAuth-токен или приложение)" });
 
-		new Setting(manualEl)
-			.setName("OAuth-токен")
+		new Setting(advancedEl)
+			.setName("OAuth-токен (вручную)")
 			.setDesc("Вставьте токен вручную, если браузерная авторизация недоступна")
 			.addText((text) =>
 				text
@@ -77,6 +77,34 @@ export class ObsYaDiskSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		new Setting(advancedEl)
+			.setName("Client ID приложения")
+			.setDesc("Оставьте пустым чтобы использовать встроенное приложение. Заполните если хотите использовать собственное OAuth-приложение с oauth.yandex.ru (redirect URI: obsidian://obsyadisk-auth)")
+			.addText((text) =>
+				text
+					.setPlaceholder("(встроенное приложение)")
+					.setValue(this.plugin.settings.yandexClientId === "284899b00eb84c77bf1091e65b4bd5ee" ? "" : this.plugin.settings.yandexClientId)
+					.onChange(async (value) => {
+						this.plugin.settings.yandexClientId = value.trim() || "284899b00eb84c77bf1091e65b4bd5ee";
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(advancedEl)
+			.setName("Client Secret приложения")
+			.setDesc("Только если используете своё OAuth-приложение")
+			.addText((text) => {
+				text.inputEl.type = "password";
+				text
+					.setPlaceholder("секрет...")
+					.setValue(this.plugin.settings.yandexClientSecret)
+					.onChange(async (value) => {
+						this.plugin.settings.yandexClientSecret = value.trim();
+						await this.plugin.saveSettings();
+					});
+				return text;
+			});
 
 		new Setting(containerEl)
 			.setName("Проверить токен")
@@ -197,8 +225,27 @@ export class ObsYaDiskSettingTab extends PluginSettingTab {
 			? new Date(this.plugin.settings.lastSyncTimestamp).toLocaleString()
 			: "никогда";
 
-		new Setting(containerEl)
+		const lastSyncSetting = new Setting(containerEl)
 			.setName("Последняя синхронизация")
 			.setDesc(lastSync);
+		this.plugin.lastSyncDescEl = lastSyncSetting.descEl;
+
+		// --- Debug section ---
+		containerEl.createEl("h2", { text: "Диагностика" });
+
+		new Setting(containerEl)
+			.setName("Тест git-версионирования")
+			.setDesc("Пошаговая проверка файловых операций. Результат — в консоли (Ctrl+Shift+I) и уведомлениях.")
+			.addButton((btn) =>
+				btn.setButtonText("Запустить диагностику").onClick(async () => {
+					new Notice("ObsYaDisk: Запускаем диагностику git...");
+					const lines = await this.plugin.gitVersioning.diagnose();
+					console.log("=== ObsYaDisk Git Diagnostics ===");
+					for (const line of lines) {
+						console.log(line);
+						new Notice(`Git: ${line}`, 8000);
+					}
+				})
+			);
 	}
 }

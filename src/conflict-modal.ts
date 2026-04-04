@@ -1,6 +1,7 @@
 import { App, Modal, Setting, ButtonComponent } from "obsidian";
 import { SyncAction } from "./types";
 import { SyncEngine } from "./sync-engine";
+import { DiffModal } from "./diff-modal";
 
 export class ConflictModal extends Modal {
 	private conflicts: SyncAction[];
@@ -50,6 +51,30 @@ export class ConflictModal extends Modal {
 			});
 
 			const buttonsEl = itemEl.createDiv({ cls: "obsyadisk-conflict-buttons" });
+
+			new ButtonComponent(buttonsEl)
+				.setButtonText("Показать diff")
+				.onClick(async () => {
+					const btn = buttonsEl.querySelector("button") as HTMLButtonElement;
+					if (btn) btn.disabled = true;
+					try {
+						const [localText, remoteText] = await Promise.all([
+							this.syncEngine.getLocalText(conflict.path),
+							this.syncEngine.getRemoteText(conflict.path),
+						]);
+						new DiffModal(
+							this.app,
+							conflict.path,
+							"remote",
+							remoteText,
+							localText,
+							"Яндекс.Диск",
+							"Локальная версия"
+						).open();
+					} finally {
+						if (btn) btn.disabled = false;
+					}
+				});
 
 			new ButtonComponent(buttonsEl)
 				.setButtonText("Оставить локальную")

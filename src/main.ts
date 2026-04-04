@@ -31,8 +31,10 @@ export default class ObsYaDiskPlugin extends Plugin {
 	gitVersioning!: GitVersioning;
 
 	private syncTimer: ReturnType<typeof setInterval> | null = null;
+	private syncDoneTimer: ReturnType<typeof setTimeout> | null = null;
 	private statusBarEl: HTMLElement | null = null;
 	private ribbonIconEl: HTMLElement | null = null;
+	lastSyncDescEl: HTMLElement | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -60,7 +62,17 @@ export default class ObsYaDiskPlugin extends Plugin {
 		// Register ribbon icon
 		addIcon("obsyadisk", YADISK_ICON);
 		this.ribbonIconEl = this.addRibbonIcon("obsyadisk", "ObsYaDisk: Синхронизировать", () => {
-			this.runSync();
+			if (this.syncEngine.getIsSyncing()) {
+				if (this.syncEngine.isAbortRequested()) {
+					new Notice("ObsYaDisk: Дождитесь завершения остановки...");
+				} else {
+					this.syncEngine.abort();
+					new Notice("ObsYaDisk: Остановка синхронизации...");
+					this.updateStatusBar("stopping");
+				}
+			} else {
+				this.runSync();
+			}
 		});
 
 		// Status bar
@@ -72,6 +84,20 @@ export default class ObsYaDiskPlugin extends Plugin {
 			id: "obsyadisk-sync",
 			name: "Синхронизировать с Яндекс.Диском",
 			callback: () => this.runSync(),
+		});
+
+		this.addCommand({
+			id: "obsyadisk-stop-sync",
+			name: "Остановить синхронизацию",
+			callback: () => {
+				if (this.syncEngine.getIsSyncing() && !this.syncEngine.isAbortRequested()) {
+					this.syncEngine.abort();
+					new Notice("ObsYaDisk: Остановка синхронизации...");
+					this.updateStatusBar("stopping");
+				} else if (!this.syncEngine.getIsSyncing()) {
+					new Notice("ObsYaDisk: Синхронизация не выполняется");
+				}
+			},
 		});
 
 		this.addCommand({
@@ -232,21 +258,36 @@ export default class ObsYaDiskPlugin extends Plugin {
 		}
 	}
 
-	private updateStatusBar(state: "idle" | "syncing" | "error" | "done") {
+	private updateStatusBar(state: "idle" | "syncing" | "stopping" | "error" | "done") {
 		if (!this.statusBarEl) return;
 		switch (state) {
 			case "idle":
 				this.statusBarEl.setText("YaDisk: ⏸");
+				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
 				break;
 			case "syncing":
+				if (this.syncDoneTimer) {
+					clearTimeout(this.syncDoneTimer);
+					this.syncDoneTimer = null;
+				}
 				this.statusBarEl.setText("YaDisk: ⟳ синхронизация...");
+				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Остановить синхронизацию");
+				break;
+			case "stopping":
+				this.statusBarEl.setText("YaDisk: ⏹ остановка...");
+				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Дождитесь остановки...");
 				break;
 			case "error":
 				this.statusBarEl.setText("YaDisk: ✗ ошибка");
+				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
 				break;
 			case "done":
 				this.statusBarEl.setText("YaDisk: ✓");
-				setTimeout(() => this.updateStatusBar("idle"), 5000);
+				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
+				this.syncDoneTimer = setTimeout(() => {
+					this.syncDoneTimer = null;
+					this.updateStatusBar("idle");
+				}, 5000);
 				break;
 		}
 	}
@@ -266,35 +307,23 @@ export default class ObsYaDiskPlugin extends Plugin {
 		new Notice("ObsYaDisk: Начинаем синхронизацию...");
 
 		try {
-			// Git commit before sync (snapshot current state)
-			if (this.settings.enableVersioning) {
-				try {
-					const sha = await this.gitVersioning.commitAll(
-						this.settings.commitMessageTemplate
-					);
-					if (sha) {
-						console.log(`ObsYaDisk: Pre-sync commit ${sha.slice(0, 8)}`);
-					}
-				} catch (e) {
-					console.warn("ObsYaDisk: Pre-sync git commit failed:", e);
-				}
-			}
-
 			// Run sync
-			const conflicts = await this.syncEngine.sync();
-
-			// Git commit after sync (snapshot synced state)
-			if (this.settings.enableVersioning) {
-				try {
-					const sha = await this.gitVersioning.commitAll(
-						"post-sync {{date}}"
-					);
-					if (sha) {
-						console.log(`ObsYaDisk: Post-sync commit ${sha.slice(0, 8)}`);
-					}
-				} catch (e) {
-					console.warn("ObsYaDisk: Post-sync git commit failed:", e);
+			const conflicts = await this.syncEngine.sync((done, total, file) => {
+				if (!this.statusBarEl) return;
+				if (total === 0) {
+					this.statusBarEl.setText("YaDisk: ⟳ анализ...");
+				} else {
+					const pct = Math.round((done / total) * 100);
+					this.statusBarEl.setText(`YaDisk: ⟳ ${done}/${total} (${pct}%)`);
 				}
+			});
+
+			// Check if sync was stopped by user
+			if (this.syncEngine.wasAborted()) {
+				new Notice("ObsYaDisk: Синхронизация остановлена");
+				this.updateStatusBar("idle");
+				await this.saveSettings();
+				return;
 			}
 
 			// Handle conflicts
@@ -304,6 +333,24 @@ export default class ObsYaDiskPlugin extends Plugin {
 				new Notice("ObsYaDisk: Синхронизация завершена ✓");
 			}
 
+			// Git commit — one per sync, only if user files actually changed
+			if (this.settings.enableVersioning) {
+				try {
+					const sha = await this.gitVersioning.commitAll(
+						this.settings.commitMessageTemplate
+					);
+					if (sha) console.log(`ObsYaDisk: Git commit ${sha.slice(0, 8)}`);
+				} catch (e) {
+					console.warn("ObsYaDisk: Git commit failed:", e);
+				}
+			}
+
+			this.settings.lastSyncTimestamp = new Date().toISOString();
+			if (this.lastSyncDescEl) {
+				this.lastSyncDescEl.setText(
+					new Date(this.settings.lastSyncTimestamp).toLocaleString()
+				);
+			}
 			this.updateStatusBar("done");
 			await this.saveSettings();
 		} catch (e) {

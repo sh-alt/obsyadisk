@@ -139,3 +139,143 @@
 	font-size: 13px;
 	margin-bottom: 8px;
 }
+
+/* Diff Modal — applied to modalEl (the floating container) */
+.obsyadisk-diff-modal-wide {
+	width: 90vw;
+	max-width: 1400px;
+}
+
+.obsyadisk-diff-subtitle {
+	color: var(--text-muted);
+	font-size: 0.9em;
+	margin-bottom: 12px;
+}
+
+.obsyadisk-diff-view {
+	font-family: var(--font-monospace);
+	font-size: 0.82em;
+	line-height: 1.5;
+	overflow-x: auto;
+	padding: 12px;
+	background: var(--background-secondary);
+	border-radius: 6px;
+	max-height: 70vh;
+	overflow-y: auto;
+	white-space: pre;
+}
+
+.obsyadisk-diff-add {
+	background: rgba(0, 180, 0, 0.15);
+	color: var(--color-green);
+	display: block;
+}
+
+.obsyadisk-diff-del {
+	background: rgba(220, 0, 0, 0.15);
+	color: var(--color-red);
+	display: block;
+}
+
+.obsyadisk-diff-hunk {
+	color: var(--color-cyan);
+	display: block;
+}
+
+.obsyadisk-diff-header {
+	color: var(--text-muted);
+	display: block;
+}
+
+/* Split-view diff */
+.obsyadisk-diff-meta {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.obsyadisk-diff-toggle {
+	padding: 4px 10px;
+	border-radius: 4px;
+	cursor: pointer;
+	background: var(--interactive-normal);
+	color: var(--text-normal);
+	border: 1px solid var(--background-modifier-border);
+	font-size: 0.85em;
+}
+
+.obsyadisk-diff-split-wrapper {
+	overflow: auto;
+	max-height: 70vh;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+}
+
+.obsyadisk-diff-split-table {
+	width: 100%;
+	border-collapse: collapse;
+	font-family: var(--font-monospace);
+	font-size: 0.82em;
+	table-layout: fixed;
+}
+
+.obsyadisk-diff-split-table thead th {
+	background: var(--background-secondary);
+	padding: 4px 8px;
+	text-align: left;
+	font-size: 0.9em;
+	color: var(--text-muted);
+	border-bottom: 1px solid var(--background-modifier-border);
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+
+.obsyadisk-diff-lnum {
+	width: 40px;
+	min-width: 40px;
+	color: var(--text-faint);
+	text-align: right;
+	padding: 1px 6px;
+	user-select: none;
+	background: var(--background-secondary);
+	border-right: 1px solid var(--background-modifier-border);
+}
+
+.obsyadisk-diff-cell {
+	padding: 1px 8px;
+	white-space: pre;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	width: 50%;
+}
+
+.obsyadisk-diff-row-del .obsyadisk-diff-cell:first-of-type,
+.obsyadisk-diff-cell-del {
+	background: rgba(220, 0, 0, 0.12);
+	color: var(--color-red);
+}
+
+.obsyadisk-diff-row-add .obsyadisk-diff-cell:last-of-type,
+.obsyadisk-diff-cell-add {
+	background: rgba(0, 180, 0, 0.12);
+	color: var(--color-green);
+}
+
+.obsyadisk-diff-empty {
+	background: var(--background-secondary);
+}
+
+/* Commit files list */
+.obsyadisk-commit-files {
+	margin-top: 6px;
+	padding: 6px 8px;
+	background: var(--background-secondary);
+	border-radius: 4px;
+	font-size: 0.85em;
+}
+
+.obsyadisk-file-added code { color: var(--color-green); }
+.obsyadisk-file-deleted code { color: var(--color-red); }
+.obsyadisk-file-modified code { color: var(--color-yellow); }

@@ -4,11 +4,12 @@ import { ObsYaDiskSettings, SyncAction, YaDiskResource } from "./types";
 import { isExcluded, computeMd5Hex, bufferToString, normalizePath } from "./utils";
 
 export interface SyncState {
-	/** Map of relative path -> { localHash, remoteHash, remoteMd5, lastSyncedHash } */
+	/** Map of relative path -> cached file state */
 	files: Record<
 		string,
 		{
 			localHash: string;
+			mtime: number;        // last-seen local mtime — skip MD5 if unchanged
 			remoteHash: string;
 			remoteMd5: string;
 			lastSyncedHash: string;
@@ -23,6 +24,8 @@ export class SyncEngine {
 	private settings: ObsYaDiskSettings;
 	private syncState: SyncState;
 	private isSyncing = false;
+	private abortRequested = false;
+	private lastSyncAborted = false;
 
 	constructor(vault: Vault, client: YandexDiskClient, settings: ObsYaDiskSettings) {
 		this.vault = vault;
@@ -37,6 +40,19 @@ export class SyncEngine {
 
 	getIsSyncing(): boolean {
 		return this.isSyncing;
+	}
+
+	/** Request cancellation of the current sync */
+	abort(): void {
+		this.abortRequested = true;
+	}
+
+	isAbortRequested(): boolean {
+		return this.abortRequested;
+	}
+
+	wasAborted(): boolean {
+		return this.lastSyncAborted;
 	}
 
 	/** Load sync state from a hidden file in the vault */
@@ -87,13 +103,14 @@ export class SyncEngine {
 	}
 
 	/** Perform a full sync cycle. Returns list of conflicts for UI handling. */
-	async sync(): Promise<SyncAction[]> {
+	async sync(onProgress?: (done: number, total: number, action: string) => void): Promise<SyncAction[]> {
 		if (this.isSyncing) {
 			new Notice("ObsYaDisk: Sync already in progress");
 			return [];
 		}
 
 		this.isSyncing = true;
+		this.abortRequested = false;
 		const conflicts: SyncAction[] = [];
 
 		try {
@@ -136,11 +153,30 @@ export class SyncEngine {
 
 			// 3. Determine actions
 			const actions: SyncAction[] = [];
+			// Cache hashes so we don't read each file twice
+			const localHashCache = new Map<string, string>();
+			// Yield helper — give Obsidian UI a chance to breathe every N files
+			let yieldCounter = 0;
+			const maybeYield = async () => {
+				if (++yieldCounter % 20 === 0) {
+					await new Promise<void>(r => setTimeout(r, 0));
+				}
+			};
 
 			// 3a. Check local files
 			for (const [localPath, file] of localFileMap) {
-				const content = await this.vault.readBinary(file);
-				const localHash = computeMd5Hex(content);
+				await maybeYield();
+				// mtime shortcut: skip MD5 if file hasn't changed since last sync
+				const cached = this.syncState.files[localPath];
+				const mtime = file.stat.mtime;
+				let localHash: string;
+				if (cached?.mtime === mtime && cached.localHash) {
+					localHash = cached.localHash;
+				} else {
+					const content = await this.vault.readBinary(file);
+					localHash = computeMd5Hex(content);
+				}
+				localHashCache.set(localPath, localHash);
 				const state = this.syncState.files[localPath];
 				const remote = remoteFileMap.get(localPath);
 
@@ -153,14 +189,19 @@ export class SyncEngine {
 						// New local file -> upload
 						actions.push({ type: "upload", path: localPath });
 					}
+				} else if (!state) {
+					// First encounter: no sync history for this file.
+					// If content matches remote → already in sync. Otherwise upload local.
+					if (localHash !== (remote.md5 || "")) {
+						actions.push({ type: "upload", path: localPath });
+					}
 				} else {
-					const remoteHash = remote.md5 || remote.modified;
-					const localChanged = !state || state.localHash !== localHash;
+					const localChanged = state.localHash !== localHash;
 					const remoteChanged =
-						!state || (state.remoteMd5 || state.remoteHash) !== (remote.md5 || remote.modified);
+						(state.remoteMd5 || state.remoteHash) !== (remote.md5 || remote.modified);
 
 					if (localChanged && remoteChanged) {
-						// Both changed -> conflict
+						// Both changed since last sync -> conflict
 						actions.push({
 							type: "conflict",
 							path: localPath,
@@ -191,7 +232,16 @@ export class SyncEngine {
 			}
 
 			// 4. Execute non-conflict actions
+			const executableActions = actions.filter(a => a.type !== "conflict");
+			let doneCount = 0;
+			onProgress?.(0, executableActions.length, "");
+			const downloadedPaths = new Set<string>();
+
 			for (const action of actions) {
+				if (this.abortRequested) {
+					console.log("ObsYaDisk: Sync aborted by user");
+					break;
+				}
 				try {
 					switch (action.type) {
 						case "upload":
@@ -199,6 +249,7 @@ export class SyncEngine {
 							break;
 						case "download":
 							await this.executeDownload(action.path);
+							downloadedPaths.add(action.path);
 							break;
 						case "delete-local":
 							await this.executeDeleteLocal(action.path);
@@ -210,14 +261,37 @@ export class SyncEngine {
 							conflicts.push(action);
 							break;
 					}
+					if (action.type !== "conflict") {
+						doneCount++;
+						onProgress?.(doneCount, executableActions.length, action.path);
+					}
 				} catch (e) {
 					console.error(`ObsYaDisk: Failed to execute ${action.type} for ${action.path}:`, e);
 					new Notice(`ObsYaDisk: Error syncing ${action.path}`);
 				}
 			}
 
-			// 5. Update sync state for non-conflict files
-			await this.rebuildState();
+			// 5. Update sync state using cached data — zero extra API calls
+			for (const [localPath, file] of localFileMap) {
+				const remote = remoteFileMap.get(localPath);
+				const remoteMd5 = remote?.md5 ?? "";
+				const remoteHash = remote?.modified ?? "";
+				const wasDownloaded = downloadedPaths.has(localPath);
+				// For downloaded files, local content is now equal to remote
+				const localHash = wasDownloaded
+					? remoteMd5
+					: (localHashCache.get(localPath) ?? "");
+				// mtime: use 0 for downloaded files so next sync re-checks them
+				const mtime = wasDownloaded ? 0 : (file.stat.mtime ?? 0);
+				this.syncState.files[localPath] = {
+					localHash,
+					mtime,
+					remoteHash,
+					remoteMd5,
+					lastSyncedHash: localHash,
+					lastSyncedRemoteHash: remoteHash,
+				};
+			}
 			await this.saveState();
 
 			this.settings.lastSyncTimestamp = new Date().toISOString();
@@ -225,7 +299,9 @@ export class SyncEngine {
 			console.error("ObsYaDisk: Sync error:", e);
 			new Notice(`ObsYaDisk: Sync failed — ${(e as Error).message}`);
 		} finally {
+			this.lastSyncAborted = this.abortRequested;
 			this.isSyncing = false;
+			this.abortRequested = false;
 		}
 
 		return conflicts;
@@ -285,8 +361,52 @@ export class SyncEngine {
 		} else {
 			await this.executeDownload(localPath);
 		}
-		await this.rebuildState();
+		// Update state for just this one file (single API call)
+		await this.updateSingleFileState(localPath);
 		await this.saveState();
+	}
+
+	private async updateSingleFileState(localPath: string): Promise<void> {
+		try {
+			const buf = await this.vault.adapter.readBinary(obsNormalize(localPath));
+			const localHash = computeMd5Hex(buf);
+			let remoteMd5 = localHash;
+			let remoteHash = "";
+			try {
+				const resource = await this.client.getResource(this.remotePath(localPath));
+				if (resource) {
+					remoteMd5 = resource.md5 || localHash;
+					remoteHash = resource.modified;
+				}
+			} catch { /* remote may not exist yet */ }
+			this.syncState.files[localPath] = {
+				localHash,
+				mtime: 0,
+				remoteHash,
+				remoteMd5,
+				lastSyncedHash: localHash,
+				lastSyncedRemoteHash: remoteHash,
+			};
+		} catch { /* skip unreadable */ }
+	}
+
+	/** Get text content of a local file */
+	async getLocalText(path: string): Promise<string> {
+		try {
+			return await this.vault.adapter.read(obsNormalize(path));
+		} catch {
+			return "";
+		}
+	}
+
+	/** Download and return text content of a remote file */
+	async getRemoteText(path: string): Promise<string> {
+		try {
+			const buf = await this.client.downloadFile(this.remotePath(path));
+			return new TextDecoder().decode(buf);
+		} catch {
+			return "";
+		}
 	}
 
 	/** Rebuild sync state from current local and remote files */
@@ -319,6 +439,7 @@ export class SyncEngine {
 
 				this.syncState.files[p] = {
 					localHash: hash,
+					mtime: 0,
 					remoteHash,
 					remoteMd5,
 					lastSyncedHash: hash,

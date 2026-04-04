@@ -1,4 +1,5 @@
-import git from "isomorphic-git";
+import git, { TREE } from "isomorphic-git";
+import { createTwoFilesPatch } from "diff";
 import { Vault, normalizePath as obsNormalize } from "obsidian";
 import { formatDate } from "./utils";
 
@@ -27,7 +28,7 @@ export class GitVersioning {
 
 		try {
 			await git.init({
-				fs: this.fs,
+				fs: this.fs.promises,
 				dir: "/",
 				gitdir: `/${this.gitDir}`,
 				defaultBranch: "main",
@@ -35,9 +36,59 @@ export class GitVersioning {
 		} catch (e: any) {
 			// Already initialized
 			if (!e.message?.includes("already exists")) {
+				console.error("ObsYaDisk: git.init() failed:", e);
 				throw e;
 			}
 		}
+	}
+
+	/** Diagnostic: test each fs adapter operation step by step */
+	async diagnose(): Promise<string[]> {
+		const log: string[] = [];
+		const adapter = this.vault.adapter;
+		const gitDir = this.gitDir;
+
+		try {
+			// 1. Can we stat the vault root?
+			const rootStat = await adapter.stat("/");
+			log.push(`stat("/") → ${rootStat ? rootStat.type : "null"}`);
+		} catch (e: any) {
+			log.push(`stat("/") → ERROR: ${e.message}`);
+		}
+
+		try {
+			// 2. Can we write a file into .obsyadisk-git?
+			await adapter.write(`${gitDir}/HEAD`, "ref: refs/heads/main\n");
+			log.push(`write("${gitDir}/HEAD") → OK`);
+		} catch (e: any) {
+			log.push(`write("${gitDir}/HEAD") → ERROR: ${e.message}`);
+		}
+
+		try {
+			// 3. Can we read it back?
+			const content = await adapter.read(`${gitDir}/HEAD`);
+			log.push(`read("${gitDir}/HEAD") → "${content.trim()}"`);
+		} catch (e: any) {
+			log.push(`read("${gitDir}/HEAD") → ERROR: ${e.message}`);
+		}
+
+		try {
+			// 4. Can we mkdir inside .obsyadisk-git?
+			await adapter.mkdir(`${gitDir}/objects`);
+			log.push(`mkdir("${gitDir}/objects") → OK`);
+		} catch (e: any) {
+			log.push(`mkdir("${gitDir}/objects") → ERROR: ${e.message}`);
+		}
+
+		try {
+			// 5. Try full git.init()
+			await git.init({ fs: this.fs.promises, dir: "/", gitdir: `/${gitDir}`, defaultBranch: "main" });
+			log.push(`git.init() → OK`);
+		} catch (e: any) {
+			log.push(`git.init() → ERROR: ${e.message}`);
+		}
+
+		return log;
 	}
 
 	/** Stage all changed vault files and create a commit */
@@ -45,32 +96,61 @@ export class GitVersioning {
 		await this.init(); // ensure repo is initialized before every commit
 		const message = messageTemplate.replace("{{date}}", formatDate(new Date()));
 
-		// Get all vault files (excluding our git dir and .obsidian internals that are excluded)
-		const files = this.vault.getFiles();
+		// Step 1: find which files changed in workdir vs HEAD (no file reads — uses index)
+		let changedPaths: string[] = [];
+		try {
+			const matrix = await git.statusMatrix({
+				fs: this.fs.promises,
+				dir: "/",
+				gitdir: `/${this.gitDir}`,
+				filter: (f: string) =>
+					!f.startsWith(this.gitDir) &&
+					!f.startsWith(".obsidian/") &&
+					!f.startsWith(".trash/") &&
+					!f.startsWith(".obsyadisk-"),
+			});
+			for (const [filepath, head, workdir] of matrix) {
+				// workdir !== head → file added, modified, or deleted in workdir
+				if (workdir !== head) {
+					changedPaths.push(filepath as string);
+				}
+			}
+		} catch {
+			// No commits yet: treat all non-excluded files as changed
+			changedPaths = this.vault
+				.getFiles()
+				.filter(
+					f =>
+						!f.path.startsWith(this.gitDir) &&
+						!f.path.startsWith(".obsidian/") &&
+						!f.path.startsWith(".trash/") &&
+						!f.path.startsWith(".obsyadisk-")
+				)
+				.map(f => f.path);
+		}
 
-		for (const file of files) {
-			if (file.path.startsWith(this.gitDir)) continue;
+		if (changedPaths.length === 0) return null;
 
+		// Step 2: git.add() only for the changed files
+		for (const filepath of changedPaths) {
 			try {
-				const content = await this.vault.readBinary(file);
-				// Write to git index
 				await git.add({
-					fs: this.fs,
+					fs: this.fs.promises,
 					dir: "/",
 					gitdir: `/${this.gitDir}`,
-					filepath: file.path,
+					filepath,
 				});
 			} catch (e) {
-				console.warn(`ObsYaDisk: Could not stage ${file.path}:`, e);
+				console.warn(`ObsYaDisk: Could not stage ${filepath}:`, e);
 			}
 		}
 
-		// Check if there's anything to commit
-		const status = await this.getChangedFiles();
-		if (status.length === 0) return null;
+		// Step 3: verify something is actually staged (handles delete-only edge cases)
+		const staged = await this.getChangedFiles();
+		if (staged.length === 0) return null;
 
 		const sha = await git.commit({
-			fs: this.fs,
+			fs: this.fs.promises,
 			dir: "/",
 			gitdir: `/${this.gitDir}`,
 			message,
@@ -89,7 +169,7 @@ export class GitVersioning {
 
 		try {
 			const matrix = await git.statusMatrix({
-				fs: this.fs,
+				fs: this.fs.promises,
 				dir: "/",
 				gitdir: `/${this.gitDir}`,
 				filter: (f: string) => !f.startsWith(this.gitDir),
@@ -122,7 +202,7 @@ export class GitVersioning {
 	async getLog(depth = 20): Promise<Array<{ sha: string; message: string; date: Date }>> {
 		try {
 			const commits = await git.log({
-				fs: this.fs,
+				fs: this.fs.promises,
 				dir: "/",
 				gitdir: `/${this.gitDir}`,
 				depth,
@@ -142,7 +222,7 @@ export class GitVersioning {
 	async getFileAtCommit(filepath: string, sha: string): Promise<Uint8Array | null> {
 		try {
 			const result = await git.readBlob({
-				fs: this.fs,
+				fs: this.fs.promises,
 				dir: "/",
 				gitdir: `/${this.gitDir}`,
 				oid: sha,
@@ -162,6 +242,73 @@ export class GitVersioning {
 		const normalized = obsNormalize(filepath);
 		await this.vault.adapter.writeBinary(normalized, content.buffer as ArrayBuffer);
 		return true;
+	}
+
+	/**
+	 * Compute diff between file at a commit and its current state.
+	 * Returns null if file is binary or not found.
+	 */
+	async getDiff(filepath: string, sha: string): Promise<{ oldText: string; newText: string } | null> {
+		try {
+			const oldBytes = await this.getFileAtCommit(filepath, sha);
+			if (!oldBytes) return null;
+
+			const decoder = new TextDecoder("utf-8");
+			const oldText = decoder.decode(oldBytes);
+
+			let newText = "";
+			try {
+				newText = await this.vault.adapter.read(obsNormalize(filepath));
+			} catch {
+				newText = "(файл удалён)";
+			}
+
+			return { oldText, newText };
+		} catch {
+			return null;
+		}
+	}
+
+	/** Get list of files changed in a specific commit compared to its parent */
+	async getCommitChangedFiles(sha: string): Promise<Array<{ path: string; status: "added" | "modified" | "deleted" }>> {
+		try {
+			const commit = await git.readCommit({
+				fs: this.fs.promises,
+				dir: "/",
+				gitdir: `/${this.gitDir}`,
+				oid: sha,
+			});
+
+			const parentShas = commit.commit.parent;
+			if (parentShas.length === 0) return [];
+
+			const parentSha = parentShas[0];
+			const results: Array<{ path: string; status: "added" | "modified" | "deleted" }> = [];
+
+			await git.walk({
+				fs: this.fs.promises,
+				dir: "/",
+				gitdir: `/${this.gitDir}`,
+				trees: [TREE({ ref: parentSha }), TREE({ ref: sha })],
+				map: async (filepath: string, entries: any[]) => {
+					const [parent, current] = entries;
+					if (filepath === ".") return true;
+					if (current && (await current.type()) === "tree") return true;
+					if (!parent && current) {
+						results.push({ path: filepath, status: "added" });
+					} else if (parent && !current) {
+						results.push({ path: filepath, status: "deleted" });
+					} else if (parent && current && (await parent.oid()) !== (await current.oid())) {
+						results.push({ path: filepath, status: "modified" });
+					}
+					return null;
+				},
+			});
+
+			return results;
+		} catch {
+			return [];
+		}
 	}
 }
 
@@ -195,16 +342,22 @@ class GitFsAdapter {
 				if (typeof data === "string") {
 					await this.vault.adapter.write(p, data);
 				} else {
-					const buf = data instanceof Uint8Array ? data.buffer : data;
-					await this.vault.adapter.writeBinary(p, buf as ArrayBuffer);
+					// Must slice to respect byteOffset/byteLength — data.buffer alone
+					// returns the entire underlying ArrayBuffer regardless of the view offset,
+					// which corrupts git binary files (index, pack, objects).
+					let buf: ArrayBuffer;
+					if (data instanceof Uint8Array) {
+						buf = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+					} else {
+						buf = data as ArrayBuffer;
+					}
+					await this.vault.adapter.writeBinary(p, buf);
 				}
 			},
 
 			mkdir: async (path: string, options?: any): Promise<void> => {
 				const p = this.clean(path);
-				if (!(await this.vault.adapter.exists(p))) {
-					await this.vault.adapter.mkdir(p);
-				}
+				if (p) await this.mkdirp(p);
 			},
 
 			rmdir: async (path: string, options?: any): Promise<void> => {
@@ -221,14 +374,28 @@ class GitFsAdapter {
 
 			stat: async (path: string): Promise<any> => {
 				const p = this.clean(path);
+				// Root of vault always exists
+				if (p === "") {
+					return {
+						isFile: () => false,
+						isDirectory: () => true,
+						isSymbolicLink: () => false,
+						size: 0,
+						mtimeMs: Date.now(),
+						mode: 0o40755,
+					};
+				}
 				const stat = await this.vault.adapter.stat(p);
-				if (!stat) throw new Error(`ENOENT: ${p}`);
+				if (!stat) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+				const now = Date.now();
 				return {
 					isFile: () => stat.type === "file",
 					isDirectory: () => stat.type === "folder",
 					isSymbolicLink: () => false,
-					size: stat.size,
-					mtimeMs: stat.mtime,
+					size: stat.size ?? 0,
+					// Guard against undefined/null — isomorphic-git calls .valueOf() on these
+					mtimeMs: stat.mtime ?? now,
+					ctimeMs: stat.ctime ?? now,
 					mode: stat.type === "folder" ? 0o40755 : 0o100644,
 				};
 			},
@@ -239,7 +406,7 @@ class GitFsAdapter {
 
 			readdir: async (path: string): Promise<string[]> => {
 				const p = this.clean(path);
-				const list = await this.vault.adapter.list(p);
+				const list = await this.vault.adapter.list(p || "/");
 				const entries: string[] = [];
 				for (const f of list.files) {
 					const name = f.split("/").pop();

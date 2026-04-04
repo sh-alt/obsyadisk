@@ -2,8 +2,10 @@
 	"id": "obsyadisk",
 	"name": "ObsYaDisk",
 	"version": "1.0.0",
-	"minAppVersion": "1.0.0",
-	"description": "Sync your Obsidian vault with Yandex.Disk. Supports per-vault folder mapping, git-based versioning, and conflict resolution.",
+	"minAppVersion": "1.4.0",
+	"description": "Sync your Obsidian vault with Yandex.Disk. Supports per-vault folder mapping, git-based versioning, conflict resolution, and file diff viewer.",
 	"author": "sh-alt",
+	"authorUrl": "https://github.com/sh-alt",
+	"fundingUrl": "",
 	"isDesktopOnly": false
 }

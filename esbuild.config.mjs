@@ -58,6 +58,8 @@ esbuild
 		alias: {
 			"fs": "./src/shims/fs-shim.ts",
 		},
+		platform: "browser",
+		conditions: ["browser"],
 		format: "cjs",
 		target: "es2018",
 		logLevel: "info",
