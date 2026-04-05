@@ -100,6 +100,7 @@ export class YandexOAuth {
 				"Content-Type": "application/x-www-form-urlencoded",
 			},
 			body: body.toString(),
+			throw: false,  // don't throw on 4xx — return JSON error body instead
 		});
 
 		return resp.json as OAuthTokenResponse;
@@ -113,9 +114,6 @@ export class YandexOAuth {
 	 *   so we use response_type=token which returns access_token directly via redirect.
 	 */
 	openAuthPage(): void {
-		const url = Platform.isMobile
-			? this.getAuthorizeUrlTokenFlow()
-			: this.getAuthorizeUrl();
-		window.open(url);
+		window.open(this.getAuthorizeUrl());
 	}
 }
