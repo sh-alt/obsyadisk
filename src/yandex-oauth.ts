@@ -71,6 +71,7 @@ export class YandexOAuth {
 		const params = new URLSearchParams({
 			response_type: "token",
 			client_id: this.config.clientId,
+			redirect_uri: OBSIDIAN_REDIRECT_URI,
 			force_confirm: "yes",
 		});
 		return `${YANDEX_AUTHORIZE_URL}?${params.toString()}`;
