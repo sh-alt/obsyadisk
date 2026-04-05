@@ -105,12 +105,16 @@ export class YandexOAuth {
 	}
 
 	/**
-	 * Open the authorization page in the system browser using authorization code flow.
-	 * Yandex redirects to obsidian://obsyadisk-auth?code=CODE (query param, parsed by Obsidian).
-	 * Code is then exchanged for token — client_secret is optional for native/desktop apps.
+	 * Open the authorization page in the system browser.
+	 * On desktop: authorization code flow (code → exchange → token).
+	 * On mobile: implicit/token flow (token returned directly in URL).
+	 *   Mobile browsers/WebViews may not handle the code exchange POST correctly,
+	 *   so we use response_type=token which returns access_token directly via redirect.
 	 */
 	openAuthPage(): void {
-		const url = this.getAuthorizeUrl();
+		const url = Platform.isMobile
+			? this.getAuthorizeUrlTokenFlow()
+			: this.getAuthorizeUrl();
 		window.open(url);
 	}
 }
