@@ -1,6 +1,6 @@
 {
 	"name": "obsyadisk",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"description": "Obsidian plugin for Yandex.Disk sync with git-based versioning",
 	"main": "main.js",
 	"scripts": {

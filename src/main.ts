@@ -213,22 +213,11 @@ export default class ObsYaDiskPlugin extends Plugin {
 	private async handleOAuthCallback(params: Record<string, string>) {
 		// Authorization code flow: obsidian://obsyadisk-auth?code=CODE
 		const code = params["code"];
-		// Token flow fallback: obsidian://obsyadisk-auth?access_token=TOKEN
-		const directToken = params["access_token"];
-		// Error
 		const error = params["error"];
 
 		if (error) {
 			new Notice(`ObsYaDisk: Ошибка авторизации — ${error}`);
 			console.error("ObsYaDisk OAuth error:", error, params["error_description"]);
-			return;
-		}
-
-		if (directToken) {
-			// Token was passed directly (implicit flow)
-			this.settings.yandexToken = directToken;
-			await this.saveSettings();
-			new Notice("ObsYaDisk: Авторизация успешна ✓");
 			return;
 		}
 
@@ -255,7 +244,7 @@ export default class ObsYaDiskPlugin extends Plugin {
 			return;
 		}
 
-		new Notice("ObsYaDisk: Не получен ни code, ни access_token от Яндекса");
+		new Notice("ObsYaDisk: Не получен code от Яндекса");
 	}
 
 	/** Vault file/create/delete/rename handler — schedules a debounced sync */
