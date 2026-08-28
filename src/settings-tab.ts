@@ -160,6 +160,24 @@ export class ObsYaDiskSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName("Синхронизация при изменении файлов (сек)")
+			.setDesc(
+				"Через сколько секунд после последнего изменения файла запускать синхронизацию. 0 = отключено (только по интервалу/вручную)."
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder("0")
+					.setValue(String(this.plugin.settings.fileChangeDebounceSeconds))
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num >= 0) {
+							this.plugin.settings.fileChangeDebounceSeconds = num;
+							await this.plugin.saveSettings();
+						}
+					})
+			);
+
+		new Setting(containerEl)
 			.setName("Стратегия конфликтов")
 			.setDesc("Что делать, когда файл изменён и локально, и удалённо")
 			.addDropdown((drop) =>

@@ -1,21 +1,20 @@
-import { requestUrl, Platform } from "obsidian";
+import { requestUrl } from "obsidian";
 
 /**
  * Yandex OAuth 2.0 flow for Obsidian.
  *
- * Flow:
- * 1. User clicks "Авторизоваться" → opens browser at Yandex authorize URL
- * 2. Yandex redirects to obsidian://obsyadisk-auth?code=CODE
- * 3. Obsidian catches the URI, plugin exchanges code → token via POST
+ * Uses the authorization-code flow with PKCE (RFC 7636): Yandex redirects to
+ * obsidian://obsyadisk-auth?code=CODE — a query-string param, reliably parsed by
+ * Obsidian's protocol handler. (The implicit/token flow was tried instead, but Yandex
+ * returns access_token via URL fragment per spec, which Obsidian's handler never sees —
+ * that's why it looked like nothing came back at all.) PKCE's code_verifier lets the
+ * token exchange skip client_secret, which the bundled OAuth app (a confidential
+ * client) would otherwise require and which can't be shipped in a public repo.
  *
  * For this to work, you need to register an OAuth app at https://oauth.yandex.ru/client/new:
  *   - Platform: "Web services"
- *   - Redirect URI: https://oauth.yandex.ru/verification_code  (for device flow fallback)
- *   - Redirect URI: obsidian://obsyadisk-auth  (for automatic flow)
+ *   - Redirect URI: obsidian://obsyadisk-auth
  *   - Scopes: cloud_api:disk.read, cloud_api:disk.write, cloud_api:disk.app_folder
- *
- * After registration you get a client_id (and optionally client_secret).
- * The client_id should be hardcoded or configurable.
  */
 
 const YANDEX_AUTHORIZE_URL = "https://oauth.yandex.ru/authorize";
@@ -43,36 +42,27 @@ export interface OAuthTokenResponse {
 
 export class YandexOAuth {
 	private config: OAuthConfig;
+	/** PKCE verifier for the in-flight authorization attempt, set by getAuthorizeUrl(). */
+	private codeVerifier: string | null = null;
 
 	constructor(config: OAuthConfig) {
 		this.config = config;
 	}
 
 	/**
-	 * Build the authorization URL that opens in the user's browser.
-	 * Uses `response_type=code` for the authorization code flow.
+	 * Build the authorization URL that opens in the user's browser, generating a fresh
+	 * PKCE code_verifier/code_challenge pair for this attempt.
 	 */
-	getAuthorizeUrl(): string {
+	private async getAuthorizeUrl(): Promise<string> {
+		this.codeVerifier = this.generateCodeVerifier();
+		const codeChallenge = await this.sha256Base64Url(this.codeVerifier);
 		const params = new URLSearchParams({
 			response_type: "code",
 			client_id: this.config.clientId,
 			redirect_uri: OBSIDIAN_REDIRECT_URI,
 			force_confirm: "yes",
-		});
-		return `${YANDEX_AUTHORIZE_URL}?${params.toString()}`;
-	}
-
-	/**
-	 * Build the authorization URL for device/token flow.
-	 * Returns token directly in the URL fragment — used as fallback
-	 * when obsidian:// redirect doesn't work.
-	 */
-	getAuthorizeUrlTokenFlow(): string {
-		const params = new URLSearchParams({
-			response_type: "token",
-			client_id: this.config.clientId,
-			redirect_uri: OBSIDIAN_REDIRECT_URI,
-			force_confirm: "yes",
+			code_challenge: codeChallenge,
+			code_challenge_method: "S256",
 		});
 		return `${YANDEX_AUTHORIZE_URL}?${params.toString()}`;
 	}
@@ -88,8 +78,11 @@ export class YandexOAuth {
 			client_id: this.config.clientId,
 			redirect_uri: OBSIDIAN_REDIRECT_URI,
 		});
-		// client_secret is optional for native/desktop apps in Yandex OAuth
-		if (this.config.clientSecret) {
+		if (this.codeVerifier) {
+			// PKCE: code_verifier proves possession of the original request, so
+			// Yandex accepts it in place of client_secret for this exchange.
+			body.set("code_verifier", this.codeVerifier);
+		} else if (this.config.clientSecret) {
 			body.set("client_secret", this.config.clientSecret);
 		}
 
@@ -106,14 +99,25 @@ export class YandexOAuth {
 		return resp.json as OAuthTokenResponse;
 	}
 
-	/**
-	 * Open the authorization page in the system browser.
-	 * On desktop: authorization code flow (code → exchange → token).
-	 * On mobile: implicit/token flow (token returned directly in URL).
-	 *   Mobile browsers/WebViews may not handle the code exchange POST correctly,
-	 *   so we use response_type=token which returns access_token directly via redirect.
-	 */
-	openAuthPage(): void {
-		window.open(this.getAuthorizeUrl());
+	/** Open the authorization page in the system browser. */
+	async openAuthPage(): Promise<void> {
+		window.open(await this.getAuthorizeUrl());
+	}
+
+	private generateCodeVerifier(): string {
+		const bytes = new Uint8Array(32);
+		crypto.getRandomValues(bytes);
+		return this.base64UrlEncode(bytes);
+	}
+
+	private async sha256Base64Url(input: string): Promise<string> {
+		const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+		return this.base64UrlEncode(new Uint8Array(digest));
+	}
+
+	private base64UrlEncode(bytes: Uint8Array): string {
+		let binary = "";
+		for (const b of bytes) binary += String.fromCharCode(b);
+		return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 	}
 }

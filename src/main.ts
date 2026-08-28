@@ -8,6 +8,7 @@ import {
 	Notice,
 	TFile,
 	addIcon,
+	setIcon,
 	Menu,
 	MenuItem,
 } from "obsidian";
@@ -19,7 +20,7 @@ import { GitVersioning } from "./git-versioning";
 import { ObsYaDiskSettingTab } from "./settings-tab";
 import { ConflictModal } from "./conflict-modal";
 import { VersionHistoryModal } from "./version-history-modal";
-import { debounce } from "./utils";
+import { isExcluded } from "./utils";
 
 const YADISK_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>`;
 
@@ -32,7 +33,10 @@ export default class ObsYaDiskPlugin extends Plugin {
 
 	private syncTimer: ReturnType<typeof setInterval> | null = null;
 	private syncDoneTimer: ReturnType<typeof setTimeout> | null = null;
+	private fileChangeTimer: ReturnType<typeof setTimeout> | null = null;
 	private statusBarEl: HTMLElement | null = null;
+	private statusIconEl: HTMLElement | null = null;
+	private statusTextEl: HTMLElement | null = null;
 	private ribbonIconEl: HTMLElement | null = null;
 	lastSyncDescEl: HTMLElement | null = null;
 
@@ -67,7 +71,6 @@ export default class ObsYaDiskPlugin extends Plugin {
 					new Notice("ObsYaDisk: Дождитесь завершения остановки...");
 				} else {
 					this.syncEngine.abort();
-					new Notice("ObsYaDisk: Остановка синхронизации...");
 					this.updateStatusBar("stopping");
 				}
 			} else {
@@ -92,7 +95,6 @@ export default class ObsYaDiskPlugin extends Plugin {
 			callback: () => {
 				if (this.syncEngine.getIsSyncing() && !this.syncEngine.isAbortRequested()) {
 					this.syncEngine.abort();
-					new Notice("ObsYaDisk: Остановка синхронизации...");
 					this.updateStatusBar("stopping");
 				} else if (!this.syncEngine.getIsSyncing()) {
 					new Notice("ObsYaDisk: Синхронизация не выполняется");
@@ -152,6 +154,12 @@ export default class ObsYaDiskPlugin extends Plugin {
 			})
 		);
 
+		// Debounced sync on file change (opt-in via fileChangeDebounceSeconds)
+		this.registerEvent(this.app.vault.on("modify", (file) => this.onVaultFileChanged(file.path)));
+		this.registerEvent(this.app.vault.on("create", (file) => this.onVaultFileChanged(file.path)));
+		this.registerEvent(this.app.vault.on("delete", (file) => this.onVaultFileChanged(file.path)));
+		this.registerEvent(this.app.vault.on("rename", (file) => this.onVaultFileChanged(file.path)));
+
 		// Settings tab
 		this.addSettingTab(new ObsYaDiskSettingTab(this.app, this));
 
@@ -168,6 +176,10 @@ export default class ObsYaDiskPlugin extends Plugin {
 		if (this.syncTimer) {
 			clearInterval(this.syncTimer);
 			this.syncTimer = null;
+		}
+		if (this.fileChangeTimer) {
+			clearTimeout(this.fileChangeTimer);
+			this.fileChangeTimer = null;
 		}
 		console.log("ObsYaDisk plugin unloaded");
 	}
@@ -192,9 +204,9 @@ export default class ObsYaDiskPlugin extends Plugin {
 	}
 
 	/** Open the browser to start the Yandex OAuth authorization flow */
-	startOAuthFlow() {
+	async startOAuthFlow() {
 		new Notice("ObsYaDisk: Открываем браузер для авторизации...");
-		this.oauth.openAuthPage();
+		await this.oauth.openAuthPage();
 	}
 
 	/** Handle the obsidian://obsyadisk-auth callback from the browser */
@@ -246,6 +258,21 @@ export default class ObsYaDiskPlugin extends Plugin {
 		new Notice("ObsYaDisk: Не получен ни code, ни access_token от Яндекса");
 	}
 
+	/** Vault file/create/delete/rename handler — schedules a debounced sync */
+	private onVaultFileChanged(path: string) {
+		if (!this.settings.yandexToken) return;
+		if (this.settings.fileChangeDebounceSeconds <= 0) return;
+		// Ignore our own writes (sync state file, git repo) to avoid re-triggering ourselves
+		if (path.startsWith(".obsyadisk-")) return;
+		if (isExcluded(path, this.settings.excludePatterns)) return;
+
+		if (this.fileChangeTimer) clearTimeout(this.fileChangeTimer);
+		this.fileChangeTimer = setTimeout(() => {
+			this.fileChangeTimer = null;
+			if (!this.syncEngine.getIsSyncing()) this.runSync();
+		}, this.settings.fileChangeDebounceSeconds * 1000);
+	}
+
 	restartSyncTimer() {
 		if (this.syncTimer) {
 			clearInterval(this.syncTimer);
@@ -258,31 +285,56 @@ export default class ObsYaDiskPlugin extends Plugin {
 		}
 	}
 
-	private updateStatusBar(state: "idle" | "syncing" | "stopping" | "error" | "done") {
+	/** (Re)builds the status bar as an icon + text pair; detail overrides the default text. */
+	private updateStatusBar(
+		state: "idle" | "syncing" | "stopping" | "stopped" | "error" | "done",
+		detail?: string
+	) {
 		if (!this.statusBarEl) return;
+		if (state !== "syncing" && this.syncDoneTimer) {
+			clearTimeout(this.syncDoneTimer);
+			this.syncDoneTimer = null;
+		}
+
+		this.statusBarEl.empty();
+		this.statusBarEl.addClass("obsyadisk-status");
+		this.statusIconEl = this.statusBarEl.createSpan({ cls: "obsyadisk-status-icon" });
+		this.statusTextEl = this.statusBarEl.createSpan({ cls: "obsyadisk-status-text" });
+
 		switch (state) {
 			case "idle":
-				this.statusBarEl.setText("YaDisk: ⏸");
+				setIcon(this.statusIconEl, "cloud");
+				this.statusTextEl.setText("YaDisk");
 				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
 				break;
 			case "syncing":
-				if (this.syncDoneTimer) {
-					clearTimeout(this.syncDoneTimer);
-					this.syncDoneTimer = null;
-				}
-				this.statusBarEl.setText("YaDisk: ⟳ синхронизация...");
+				this.statusIconEl.addClass("obsyadisk-spin");
+				setIcon(this.statusIconEl, "refresh-cw");
+				this.statusTextEl.setText(detail ?? "синхронизация...");
 				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Остановить синхронизацию");
 				break;
 			case "stopping":
-				this.statusBarEl.setText("YaDisk: ⏹ остановка...");
+				setIcon(this.statusIconEl, "octagon-x");
+				this.statusTextEl.setText("остановка...");
 				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Дождитесь остановки...");
 				break;
+			case "stopped":
+				setIcon(this.statusIconEl, "octagon-x");
+				this.statusTextEl.setText("остановлено");
+				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
+				this.syncDoneTimer = setTimeout(() => {
+					this.syncDoneTimer = null;
+					this.updateStatusBar("idle");
+				}, 3000);
+				break;
 			case "error":
-				this.statusBarEl.setText("YaDisk: ✗ ошибка");
+				setIcon(this.statusIconEl, "alert-circle");
+				this.statusTextEl.setText(detail ?? "ошибка");
 				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
 				break;
 			case "done":
-				this.statusBarEl.setText("YaDisk: ✓");
+				setIcon(this.statusIconEl, "check-circle-2");
+				this.statusTextEl.setText(detail ?? "готово");
 				this.ribbonIconEl?.setAttr("aria-label", "ObsYaDisk: Синхронизировать");
 				this.syncDoneTimer = setTimeout(() => {
 					this.syncDoneTimer = null;
@@ -304,24 +356,22 @@ export default class ObsYaDiskPlugin extends Plugin {
 		}
 
 		this.updateStatusBar("syncing");
-		new Notice("ObsYaDisk: Начинаем синхронизацию...");
 
 		try {
 			// Run sync
 			const conflicts = await this.syncEngine.sync((done, total, file) => {
-				if (!this.statusBarEl) return;
+				if (!this.statusTextEl) return;
 				if (total === 0) {
-					this.statusBarEl.setText("YaDisk: ⟳ анализ...");
+					this.statusTextEl.setText("анализ...");
 				} else {
 					const pct = Math.round((done / total) * 100);
-					this.statusBarEl.setText(`YaDisk: ⟳ ${done}/${total} (${pct}%)`);
+					this.statusTextEl.setText(`${done}/${total} (${pct}%)`);
 				}
 			});
 
 			// Check if sync was stopped by user
 			if (this.syncEngine.wasAborted()) {
-				new Notice("ObsYaDisk: Синхронизация остановлена");
-				this.updateStatusBar("idle");
+				this.updateStatusBar("stopped");
 				await this.saveSettings();
 				return;
 			}
@@ -329,8 +379,6 @@ export default class ObsYaDiskPlugin extends Plugin {
 			// Handle conflicts
 			if (conflicts.length > 0) {
 				this.handleConflicts(conflicts);
-			} else {
-				new Notice("ObsYaDisk: Синхронизация завершена ✓");
 			}
 
 			// Git commit — one per sync, only if user files actually changed
@@ -392,8 +440,7 @@ export default class ObsYaDiskPlugin extends Plugin {
 			return;
 		}
 
-		this.updateStatusBar("syncing");
-		new Notice("ObsYaDisk: Принудительная загрузка на Яндекс.Диск...");
+		this.updateStatusBar("syncing", "загрузка на диск...");
 
 		try {
 			const files = this.app.vault.getFiles().filter(
@@ -407,13 +454,13 @@ export default class ObsYaDiskPlugin extends Plugin {
 				try {
 					await this.syncEngine.executeUpload(file.path);
 					count++;
+					if (this.statusTextEl) this.statusTextEl.setText(`${count}/${files.length}`);
 				} catch (e) {
 					console.error(`ObsYaDisk: Upload failed for ${file.path}:`, e);
 				}
 			}
 
-			new Notice(`ObsYaDisk: Загружено ${count} файлов ✓`);
-			this.updateStatusBar("done");
+			this.updateStatusBar("done", `загружено ${count} файлов`);
 		} catch (e) {
 			new Notice(`ObsYaDisk: Ошибка — ${(e as Error).message}`);
 			this.updateStatusBar("error");
@@ -427,8 +474,7 @@ export default class ObsYaDiskPlugin extends Plugin {
 			return;
 		}
 
-		this.updateStatusBar("syncing");
-		new Notice("ObsYaDisk: Принудительная загрузка с Яндекс.Диска...");
+		this.updateStatusBar("syncing", "загрузка с диска...");
 
 		try {
 			const remoteFiles = await this.yadiskClient.listAllFiles(
@@ -449,13 +495,13 @@ export default class ObsYaDiskPlugin extends Plugin {
 				try {
 					await this.syncEngine.executeDownload(localPath);
 					count++;
+					if (this.statusTextEl) this.statusTextEl.setText(`${count}/${remoteFiles.length}`);
 				} catch (e) {
 					console.error(`ObsYaDisk: Download failed for ${localPath}:`, e);
 				}
 			}
 
-			new Notice(`ObsYaDisk: Загружено ${count} файлов ✓`);
-			this.updateStatusBar("done");
+			this.updateStatusBar("done", `загружено ${count} файлов`);
 		} catch (e) {
 			new Notice(`ObsYaDisk: Ошибка — ${(e as Error).message}`);
 			this.updateStatusBar("error");

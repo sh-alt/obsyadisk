@@ -9,6 +9,8 @@ export interface ObsYaDiskSettings {
 	remoteFolderPath: string;
 	/** Sync interval in minutes (0 = manual only) */
 	syncIntervalMinutes: number;
+	/** Seconds to wait after a file change before triggering a sync (0 = disabled) */
+	fileChangeDebounceSeconds: number;
 	/** Enable git-based versioning */
 	enableVersioning: boolean;
 	/** Auto-commit message template. Use {{date}} for timestamp */
@@ -30,6 +32,7 @@ export const DEFAULT_SETTINGS: ObsYaDiskSettings = {
 	yandexClientSecret: "",
 	remoteFolderPath: "/ObsidianSync",
 	syncIntervalMinutes: 5,
+	fileChangeDebounceSeconds: 0,
 	enableVersioning: true,
 	commitMessageTemplate: "sync {{date}}",
 	conflictStrategy: "ask",
