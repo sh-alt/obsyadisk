@@ -272,14 +272,17 @@ export class GitVersioning {
 	async getDiff(filepath: string, sha: string): Promise<{ oldText: string; newText: string } | null> {
 		try {
 			const oldBytes = await this.getFileAtCommit(filepath, sha);
-			if (!oldBytes) return null;
+			if (!oldBytes || this.looksBinary(oldBytes)) return null;
 
 			const decoder = new TextDecoder("utf-8");
 			const oldText = decoder.decode(oldBytes);
 
 			let newText = "";
 			try {
-				newText = await this.vault.adapter.read(obsNormalize(filepath));
+				const newBytes = await this.vault.adapter.readBinary(obsNormalize(filepath));
+				const newArr = new Uint8Array(newBytes);
+				if (this.looksBinary(newArr)) return null;
+				newText = decoder.decode(newArr);
 			} catch {
 				newText = "(файл удалён)";
 			}
@@ -290,8 +293,38 @@ export class GitVersioning {
 		}
 	}
 
-	/** Get list of files changed in a specific commit compared to its parent */
-	async getCommitChangedFiles(sha: string): Promise<Array<{ path: string; status: "added" | "modified" | "deleted" }>> {
+	/** Get the diff for a single file as changed within one specific commit (vs its parent), not vs the current vault */
+	async getCommitFileDiff(filepath: string, sha: string): Promise<{ oldText: string; newText: string } | null> {
+		const parentSha = await this.getParentSha(sha);
+		return this.getFileDiffBetween(filepath, parentSha, sha);
+	}
+
+	/** Get the diff for a file between two arbitrary commits — fromSha === null means "file didn't exist before" */
+	async getFileDiffBetween(
+		filepath: string,
+		fromSha: string | null,
+		toSha: string
+	): Promise<{ oldText: string; newText: string } | null> {
+		try {
+			const newBytes = await this.getFileAtCommit(filepath, toSha);
+			const oldBytes = fromSha ? await this.getFileAtCommit(filepath, fromSha) : null;
+			if (!oldBytes && !newBytes) return null;
+			if ((oldBytes && this.looksBinary(oldBytes)) || (newBytes && this.looksBinary(newBytes))) {
+				return null;
+			}
+
+			const decoder = new TextDecoder("utf-8");
+			const oldText = oldBytes ? decoder.decode(oldBytes) : "";
+			const newText = newBytes ? decoder.decode(newBytes) : "(файл удалён)";
+
+			return { oldText, newText };
+		} catch {
+			return null;
+		}
+	}
+
+	/** Parent commit sha, or null if this is the root commit */
+	async getParentSha(sha: string): Promise<string | null> {
 		try {
 			const commit = await git.readCommit({
 				fs: this.fs.promises,
@@ -299,18 +332,60 @@ export class GitVersioning {
 				gitdir: `/${this.gitDir}`,
 				oid: sha,
 			});
+			return commit.commit.parent[0] ?? null;
+		} catch {
+			return null;
+		}
+	}
 
-			const parentShas = commit.commit.parent;
-			if (parentShas.length === 0) return [];
+	/** Git's own heuristic: a NUL byte in the first chunk means treat the file as binary */
+	private looksBinary(bytes: Uint8Array): boolean {
+		const len = Math.min(bytes.length, 8000);
+		for (let i = 0; i < len; i++) {
+			if (bytes[i] === 0) return true;
+		}
+		return false;
+	}
 
-			const parentSha = parentShas[0];
-			const results: Array<{ path: string; status: "added" | "modified" | "deleted" }> = [];
+	/** Get list of files changed in a specific commit compared to its parent */
+	async getCommitChangedFiles(sha: string): Promise<Array<{ path: string; status: "added" | "modified" | "deleted" }>> {
+		const parentSha = await this.getParentSha(sha);
+		// Preserve prior behavior: the root commit (no parent) shows no changes here,
+		// rather than dumping the whole initial vault as "added".
+		if (!parentSha) return [];
+		return this.getChangesBetween(parentSha, sha);
+	}
+
+	/** Get list of files changed between two arbitrary commits — fromSha === null means "everything in toSha is new" */
+	async getChangesBetween(
+		fromSha: string | null,
+		toSha: string
+	): Promise<Array<{ path: string; status: "added" | "modified" | "deleted" }>> {
+		const results: Array<{ path: string; status: "added" | "modified" | "deleted" }> = [];
+		try {
+			if (!fromSha) {
+				await git.walk({
+					fs: this.fs.promises,
+					dir: "/",
+					gitdir: `/${this.gitDir}`,
+					trees: [TREE({ ref: toSha })],
+					map: async (filepath: string, entries: any[]) => {
+						const [current] = entries;
+						if (filepath === ".") return true;
+						if (!current) return null;
+						if ((await current.type()) === "tree") return true;
+						results.push({ path: filepath, status: "added" });
+						return null;
+					},
+				});
+				return results;
+			}
 
 			await git.walk({
 				fs: this.fs.promises,
 				dir: "/",
 				gitdir: `/${this.gitDir}`,
-				trees: [TREE({ ref: parentSha }), TREE({ ref: sha })],
+				trees: [TREE({ ref: fromSha }), TREE({ ref: toSha })],
 				map: async (filepath: string, entries: any[]) => {
 					const [parent, current] = entries;
 					if (filepath === ".") return true;

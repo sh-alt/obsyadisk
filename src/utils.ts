@@ -50,9 +50,12 @@ function matchGlob(str: string, pattern: string): boolean {
 	return new RegExp(regexStr).test(str);
 }
 
-/** Format date for commit messages */
+/** Format date for commit messages, in local time (toISOString() is always UTC and looks deceptively local) */
 export function formatDate(date: Date): string {
-	return date.toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+	const pad = (n: number) => String(n).padStart(2, "0");
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
+		date.getHours()
+	)}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 /** Normalize path separators to forward slash and remove leading slash */

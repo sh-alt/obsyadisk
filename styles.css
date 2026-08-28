@@ -100,6 +100,36 @@
 	gap: 8px;
 }
 
+.obsyadisk-version-day {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 10px 12px;
+	background: var(--background-secondary);
+}
+
+.obsyadisk-version-day-header {
+	margin-bottom: 8px;
+}
+
+.obsyadisk-version-day-body {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: flex-start;
+}
+
+.obsyadisk-version-day-commits {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: 100%;
+	margin-top: 8px;
+}
+
+.obsyadisk-day-summary {
+	width: 100%;
+}
+
 .obsyadisk-version-item {
 	display: flex;
 	justify-content: space-between;
@@ -300,3 +330,17 @@
 .obsyadisk-file-added code { color: var(--color-green); }
 .obsyadisk-file-deleted code { color: var(--color-red); }
 .obsyadisk-file-modified code { color: var(--color-yellow); }
+
+.obsyadisk-commit-file-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 2px 0;
+}
+
+.obsyadisk-commit-file-diff-btn {
+	font-size: 0.8em;
+	padding: 2px 8px;
+	height: auto;
+}

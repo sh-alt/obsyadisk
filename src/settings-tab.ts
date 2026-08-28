@@ -228,7 +228,7 @@ export class ObsYaDiskSettingTab extends PluginSettingTab {
 			.setDesc("Используйте {{date}} для подстановки даты/времени")
 			.addText((text) =>
 				text
-					.setPlaceholder("sync {{date}}")
+					.setPlaceholder("Изменения")
 					.setValue(this.plugin.settings.commitMessageTemplate)
 					.onChange(async (value) => {
 						this.plugin.settings.commitMessageTemplate = value;

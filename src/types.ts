@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS: ObsYaDiskSettings = {
 	syncIntervalMinutes: 5,
 	fileChangeDebounceSeconds: 0,
 	enableVersioning: true,
-	commitMessageTemplate: "sync {{date}}",
+	commitMessageTemplate: "Изменения",
 	conflictStrategy: "ask",
 	excludePatterns: [".obsidian/workspace.json", ".obsidian/workspace-mobile.json", ".trash/**"],
 	lastSyncTimestamp: "",
