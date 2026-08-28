@@ -97,7 +97,12 @@ export class GitVersioning {
 		const message = messageTemplate.replace("{{date}}", formatDate(new Date()));
 
 		// Step 1: find which files changed in workdir vs HEAD (no file reads — uses index)
-		let changedPaths: string[] = [];
+		// Deletions (workdir === 0) need git.remove(), not git.add() — add() requires
+		// the file to exist on disk and throws NotFoundError otherwise, which used to be
+		// silently swallowed below, leaving deleted/renamed-away paths phantom-tracked
+		// in the index forever (and re-attempted, and re-failed, on every future commit).
+		let toAdd: string[] = [];
+		let toRemove: string[] = [];
 		try {
 			const matrix = await git.statusMatrix({
 				fs: this.fs.promises,
@@ -112,12 +117,16 @@ export class GitVersioning {
 			for (const [filepath, head, workdir] of matrix) {
 				// workdir !== head → file added, modified, or deleted in workdir
 				if (workdir !== head) {
-					changedPaths.push(filepath as string);
+					if (workdir === 0) {
+						toRemove.push(filepath as string);
+					} else {
+						toAdd.push(filepath as string);
+					}
 				}
 			}
 		} catch {
-			// No commits yet: treat all non-excluded files as changed
-			changedPaths = this.vault
+			// No commits yet: treat all non-excluded files as new adds
+			toAdd = this.vault
 				.getFiles()
 				.filter(
 					f =>
@@ -129,10 +138,10 @@ export class GitVersioning {
 				.map(f => f.path);
 		}
 
-		if (changedPaths.length === 0) return null;
+		if (toAdd.length === 0 && toRemove.length === 0) return null;
 
-		// Step 2: git.add() only for the changed files
-		for (const filepath of changedPaths) {
+		// Step 2: stage adds/modifications and removals
+		for (const filepath of toAdd) {
 			try {
 				await git.add({
 					fs: this.fs.promises,
@@ -142,6 +151,18 @@ export class GitVersioning {
 				});
 			} catch (e) {
 				console.warn(`ObsYaDisk: Could not stage ${filepath}:`, e);
+			}
+		}
+		for (const filepath of toRemove) {
+			try {
+				await git.remove({
+					fs: this.fs.promises,
+					dir: "/",
+					gitdir: `/${this.gitDir}`,
+					filepath,
+				});
+			} catch (e) {
+				console.warn(`ObsYaDisk: Could not stage removal of ${filepath}:`, e);
 			}
 		}
 
