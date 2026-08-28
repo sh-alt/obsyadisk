@@ -5,6 +5,9 @@ import { DiffModal } from "./diff-modal";
 type LogEntry = { sha: string; message: string; date: Date };
 type ChangedFile = { path: string; status: "added" | "modified" | "deleted" };
 
+/** How many commits to fetch for the general (vault-wide) log before day-grouping */
+const GENERAL_LOG_DEPTH = 300;
+
 export class VersionHistoryModal extends Modal {
 	private git: GitVersioning;
 	private filePath: string | null;
@@ -24,7 +27,8 @@ export class VersionHistoryModal extends Modal {
 
 		// Per-file history is usually short; the general log can be long, especially
 		// with debounced sync-on-change, so fetch deeper for meaningful day grouping.
-		const log = await this.git.getLog(this.filePath ? 50 : 300);
+		const logDepth = this.filePath ? 50 : GENERAL_LOG_DEPTH;
+		const log = await this.git.getLog(logDepth);
 
 		if (log.length === 0) {
 			contentEl.createEl("p", { text: "История пуста. Выполните синхронизацию для создания первого коммита." });
@@ -46,6 +50,18 @@ export class VersionHistoryModal extends Modal {
 		// per-commit breakdown available as an optional toggle.
 		for (const dayEntries of this.groupByDay(log)) {
 			this.renderDayGroup(listEl, dayEntries);
+		}
+
+		// log.length hitting the fetch cap means there's more history beyond it — the
+		// oldest day shown above may only have its tail end of commits included, so its
+		// commit count and per-commit breakdown could be undercounted. The day-summary
+		// diff itself is unaffected (it walks git objects directly via getParentSha, not
+		// this list), so only the count/breakdown honesty note is needed here.
+		if (log.length === logDepth) {
+			contentEl.createEl("p", {
+				text: `Показаны последние ${logDepth} коммитов — самый старый день в списке выше может быть неполным.`,
+				cls: "obsyadisk-version-meta",
+			});
 		}
 	}
 
@@ -80,20 +96,21 @@ export class VersionHistoryModal extends Modal {
 		const newestSha = dayEntries[0].sha;
 		const oldestSha = dayEntries[dayEntries.length - 1].sha;
 
-		new ButtonComponent(bodyEl).setButtonText("Изменения за день").onClick(async (evt) => {
-			const btn = evt.currentTarget as HTMLElement;
+		new ButtonComponent(bodyEl).setButtonText("Изменения за день").onClick(async () => {
 			const existing = bodyEl.querySelector(".obsyadisk-day-summary");
 			if (existing) {
 				const el = existing as HTMLElement;
 				el.style.display = el.style.display === "none" ? "" : "none";
 				return;
 			}
-			btn.setText("Загрузка...");
+			// Create the guard element synchronously, before any await, so a second
+			// click while this is still loading finds it and toggles instead of
+			// re-entering and building a duplicate summary block.
+			const summaryEl = bodyEl.createDiv({ cls: "obsyadisk-commit-files obsyadisk-day-summary" });
+			summaryEl.setText("Загрузка...");
 			const fromSha = await this.git.getParentSha(oldestSha);
 			const changed = await this.git.getChangesBetween(fromSha, newestSha);
-			btn.setText("Изменения за день");
-
-			const summaryEl = bodyEl.createDiv({ cls: "obsyadisk-commit-files obsyadisk-day-summary" });
+			summaryEl.empty();
 			if (changed.length === 0) {
 				summaryEl.setText("Нет изменений файлов за этот день");
 				return;

@@ -134,7 +134,7 @@ export default class ObsYaDiskPlugin extends Plugin {
 			},
 		});
 
-		// File menu: version history for specific file, and the general vault-wide log
+		// File/folder menu: version history for a specific file, and the general vault-wide log
 		this.registerEvent(
 			this.app.workspace.on("file-menu", (menu: Menu, file) => {
 				if (file instanceof TFile) {
@@ -150,15 +150,16 @@ export default class ObsYaDiskPlugin extends Plugin {
 								).open();
 							});
 					});
-					menu.addItem((item: MenuItem) => {
-						item
-							.setTitle("ObsYaDisk: Общая история версий (Git)")
-							.setIcon("history")
-							.onClick(() => {
-								new VersionHistoryModal(this.app, this.gitVersioning).open();
-							});
-					});
 				}
+				// Doesn't depend on which file/folder was clicked — show it regardless.
+				menu.addItem((item: MenuItem) => {
+					item
+						.setTitle("ObsYaDisk: Общая история версий (Git)")
+						.setIcon("history")
+						.onClick(() => {
+							new VersionHistoryModal(this.app, this.gitVersioning).open();
+						});
+				});
 			})
 		);
 

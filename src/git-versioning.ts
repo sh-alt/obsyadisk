@@ -293,12 +293,6 @@ export class GitVersioning {
 		}
 	}
 
-	/** Get the diff for a single file as changed within one specific commit (vs its parent), not vs the current vault */
-	async getCommitFileDiff(filepath: string, sha: string): Promise<{ oldText: string; newText: string } | null> {
-		const parentSha = await this.getParentSha(sha);
-		return this.getFileDiffBetween(filepath, parentSha, sha);
-	}
-
 	/** Get the diff for a file between two arbitrary commits — fromSha === null means "file didn't exist before" */
 	async getFileDiffBetween(
 		filepath: string,
